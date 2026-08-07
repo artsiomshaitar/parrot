@@ -200,7 +200,9 @@ struct Models: ParsableCommand {
                 let langs = "[\(m.languages.joined(separator: ","))]"
                     .padding(toLength: 9, withPad: " ", startingAt: 0)
                 let size = String(format: "%5d MB", m.sizeMB)
-                print("\(star) \(id) \(size)  \(langs)  \(m.displayName)")
+                let state = (ModelStore.isDownloaded(m) ? "downloaded" : "not downloaded")
+                    .padding(toLength: 14, withPad: " ", startingAt: 0)
+                print("\(star) \(id) \(size)  \(langs)  \(state)  \(m.displayName)")
             }
         }
     }

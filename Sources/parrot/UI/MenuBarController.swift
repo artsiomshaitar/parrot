@@ -8,7 +8,7 @@ import AppKit
 /// selection here is what parrot uses on every future launch — including when
 /// started by the LaunchAgent, which passes no arguments.
 @MainActor
-final class MenuBarController {
+final class MenuBarController: NSObject {
     /// Hotkeys offered in the menu. The full set (f1…f20, keycode:N) stays
     /// CLI-only — a twenty-entry submenu would be noise.
     static let selectableHotkeys: [Hotkey] = [
@@ -19,10 +19,30 @@ final class MenuBarController {
     private let stateLabel: NSMenuItem
     private let modelMenu = NSMenu()
     private let hotkeyMenu = NSMenu()
+    private var modelItems: [NSMenuItem] = []
 
     private var modelID: String
     private var hotkey: Hotkey
     private var idleTitle: String { "idle · hold \(hotkey.label) to dictate" }
+
+    /// The model currently being fetched, and how far along. Separate from
+    /// `modelID`, which only moves once the new model is actually loaded.
+    private var downloading: (id: String, fraction: Double)?
+    /// Set while a model is downloading or loading; outlives a single dictation
+    /// turn, unlike `activity`.
+    private var modelStatus: String?
+    /// Recording or transcribing — transient, and takes the label while it lasts.
+    private var activity: String?
+
+    /// Braille frames rather than an NSProgressIndicator: a real spinner needs
+    /// `NSMenuItem.view`, which means drawing the highlight and title by hand
+    /// and losing the standard menu appearance. This is one glyph in the title.
+    private static let spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    private var spinnerFrame = 0
+    private var spinnerTimer: Timer?
+    /// The spinner is only visible while the submenu is open, so it only ticks
+    /// then — no 10 Hz wakeups for a menu nobody is looking at.
+    private var modelMenuIsOpen = false
 
     private let onSelectModel: (String) -> Void
     private let onSelectHotkey: (Hotkey) -> Void
@@ -54,6 +74,11 @@ final class MenuBarController {
         menu.autoenablesItems = false
 
         stateLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+
+        // NSMenuDelegate is an NSObject protocol, so this class is an NSObject
+        // subclass and owes super a call before it can touch its own members.
+        super.init()
+
         stateLabel.isEnabled = false
         menu.addItem(stateLabel)
 
@@ -82,25 +107,75 @@ final class MenuBarController {
 
         buildModelMenu()
         buildHotkeyMenu()
-        stateLabel.title = idleTitle
+        refreshStateLabel()
         configureButton()
+        // Disk state can change without going through this class — the startup
+        // warmup downloads the configured model, for one — so re-read it each
+        // time the submenu opens rather than trusting a cached answer.
+        modelMenu.delegate = self
     }
 
     // MARK: - Submenus
 
     private func buildModelMenu() {
         modelMenu.removeAllItems()
-        for model in ModelRegistry.shared {
+        modelItems = ModelRegistry.shared.map { model in
             let item = NSMenuItem(
-                title: "\(model.displayName) · \(model.sizeMB) MB",
+                title: "",
                 action: #selector(modelClicked(_:)),
                 keyEquivalent: ""
             )
             item.target = self
             item.representedObject = model.id
-            item.state = (model.id == modelID) ? .on : .off
             modelMenu.addItem(item)
+            return item
         }
+        refreshModelItems()
+    }
+
+    /// Titles are rewritten in place rather than rebuilt, so progress can tick
+    /// while the submenu is open without items flickering out from under the
+    /// cursor.
+    private func refreshModelItems() {
+        for (item, model) in zip(modelItems, ModelRegistry.shared) {
+            item.title = "\(model.displayName) · \(detail(for: model))"
+            item.state = (model.id == modelID) ? .on : .off
+        }
+    }
+
+    private func detail(for model: TranscriptionModel) -> String {
+        if let downloading, downloading.id == model.id {
+            let frame = Self.spinnerFrames[spinnerFrame]
+            return "\(frame) downloading \(Int(downloading.fraction * 100))%"
+        }
+        if ModelStore.isDownloaded(model) { return "\(model.sizeMB) MB" }
+        return "\(model.sizeMB) MB · not downloaded"
+    }
+
+    /// Runs the spinner only while there's a download to show and a submenu to
+    /// show it in.
+    private func updateSpinner() {
+        let shouldRun = downloading != nil && modelMenuIsOpen
+        guard shouldRun else {
+            spinnerTimer?.invalidate()
+            spinnerTimer = nil
+            return
+        }
+        guard spinnerTimer == nil else { return }
+
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.spinnerFrame = (self.spinnerFrame + 1) % Self.spinnerFrames.count
+                self.refreshModelItems()
+            }
+        }
+        // An open menu runs the run loop in .eventTracking, so a timer left in
+        // the default mode would sit frozen for exactly as long as the menu is
+        // visible — the only time the spinner matters.
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        RunLoop.main.add(timer, forMode: .common)
+        spinnerTimer = timer
     }
 
     private func buildHotkeyMenu() {
@@ -142,30 +217,58 @@ final class MenuBarController {
 
     // MARK: - State
 
+    /// Dictation state wins the label while it's happening, but a model
+    /// download outlives it — so the two are tracked separately and the label
+    /// is derived, rather than each caller overwriting a shared string.
+    private func refreshStateLabel() {
+        stateLabel.title = activity ?? modelStatus ?? idleTitle
+    }
+
     func setRecording(_ recording: Bool) {
-        stateLabel.title = recording ? "● recording" : idleTitle
+        activity = recording ? "● recording" : nil
+        refreshStateLabel()
     }
 
     func setTranscribing() {
-        stateLabel.title = "transcribing…"
+        activity = "transcribing…"
+        refreshStateLabel()
     }
 
     /// Called once the new model is actually loaded, not when it's picked —
     /// the checkmark should track reality, not intent.
     func setModel(_ id: String) {
         modelID = id
-        buildModelMenu()
-        stateLabel.title = idleTitle
+        downloading = nil
+        modelStatus = nil
+        updateSpinner()
+        refreshModelItems()
+        refreshStateLabel()
     }
 
     func setLoadingModel(_ id: String) {
-        stateLabel.title = "loading \(id)…"
+        downloading = nil
+        modelStatus = "loading \(ModelRegistry.find(id)?.displayName ?? id)…"
+        updateSpinner()
+        refreshModelItems()
+        refreshStateLabel()
+    }
+
+    /// Ignores sub-percent ticks — WhisperKit reports progress far more often
+    /// than a menu can usefully show it.
+    func setDownloadProgress(_ id: String, _ fraction: Double) {
+        let percent = Int(fraction * 100)
+        if let downloading, downloading.id == id, Int(downloading.fraction * 100) == percent { return }
+        downloading = (id, fraction)
+        modelStatus = "downloading \(ModelRegistry.find(id)?.displayName ?? id) · \(percent)%"
+        updateSpinner()
+        refreshModelItems()
+        refreshStateLabel()
     }
 
     func setHotkey(_ key: Hotkey) {
         hotkey = key
         buildHotkeyMenu()
-        stateLabel.title = idleTitle
+        refreshStateLabel()
     }
 
     // MARK: - Icon
@@ -203,5 +306,20 @@ final class MenuBarController {
 
     @objc private func quitClicked() {
         NSApp.terminate(nil)
+    }
+}
+
+extension MenuBarController: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === modelMenu else { return }
+        modelMenuIsOpen = true
+        refreshModelItems()
+        updateSpinner()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === modelMenu else { return }
+        modelMenuIsOpen = false
+        updateSpinner()
     }
 }

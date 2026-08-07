@@ -117,7 +117,17 @@ final class Daemon {
     private func selectModel(_ id: String) {
         guard !isSwitchingModel, let next = ModelRegistry.find(id) else { return }
         isSwitchingModel = true
-        menuBar.setLoadingModel(id)
+
+        // Download explicitly when the model isn't on disk. WhisperKit's
+        // initializer would fetch it anyway, but silently — picking a 1.6 GB
+        // model would look identical to picking one already downloaded.
+        let needsDownload = !ModelStore.isDownloaded(next)
+        if needsDownload {
+            menuBar.setDownloadProgress(id, 0)
+            logLine("downloading \(id) (\(next.sizeMB) MB)…")
+        } else {
+            menuBar.setLoadingModel(id)
+        }
         logLine("switching model → \(id)")
 
         let candidate = WhisperKitTranscriber(
@@ -127,8 +137,21 @@ final class Daemon {
             usePromptTerms: usePromptTerms
         )
 
+        // Capture the menu bar directly rather than reaching through a weak
+        // `self` from inside two nested tasks — WhisperKit calls this back off
+        // its own download machinery, and the doubly-captured form is an error
+        // under the Swift 6 language mode.
+        let menuBar = self.menuBar!
+        let onProgress: @Sendable (Double) -> Void = { fraction in
+            Task { @MainActor in menuBar.setDownloadProgress(id, fraction) }
+        }
+
         Task { [weak self] in
             do {
+                if needsDownload {
+                    try await ModelStore.download(next, progress: onProgress)
+                    logLine("downloaded \(id)")
+                }
                 // Warm up before swapping, so a failed download or load leaves
                 // the working model in place.
                 try await candidate.warmUp()
