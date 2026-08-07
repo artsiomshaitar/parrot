@@ -16,12 +16,15 @@ struct Check {
 }
 
 enum DoctorReport {
-    static func run() -> [Check] {
-        [
-            checkMicrophone(),
-            checkAccessibility(),
-            checkFnKeyMapping(),
-        ]
+    /// The Fn-mapping check only applies when Fn *is* the hotkey; on any other
+    /// key macOS isn't intercepting anything, so including it would hard-fail
+    /// startup over an irrelevant setting.
+    static func run(hotkey: Hotkey = .fn) -> [Check] {
+        var checks = [checkMicrophone(), checkAccessibility()]
+        if hotkey == .fn {
+            checks.append(checkFnKeyMapping())
+        }
+        return checks
     }
 
     static func checkMicrophone() -> Check {
@@ -33,7 +36,7 @@ enum DoctorReport {
             return Check(
                 name: "microphone",
                 status: .warn("not yet requested — will prompt on first recording"),
-                remediation: "run parrot and hold Fn once; macOS will prompt"
+                remediation: "run parrot and hold your push-to-talk key once; macOS will prompt"
             )
         case .denied, .restricted:
             return Check(

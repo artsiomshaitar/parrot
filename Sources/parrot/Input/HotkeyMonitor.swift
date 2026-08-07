@@ -10,16 +10,16 @@ final class HotkeyMonitor {
     enum Event { case pressed, released }
     enum HotkeyError: Error { case tapCreateFailed }
 
-    /// Mask of the modifier we treat as the hotkey. Fn = `.maskSecondaryFn`.
-    private let mask: CGEventFlags
+    /// The key we treat as push-to-talk.
+    private let hotkey: Hotkey
     private let debug: Bool
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isPressed = false
 
-    init(mask: CGEventFlags = .maskSecondaryFn, debug: Bool = false) {
-        self.mask = mask
+    init(hotkey: Hotkey = .fn, debug: Bool = false) {
+        self.hotkey = hotkey
         self.debug = debug
     }
 
@@ -86,8 +86,25 @@ final class HotkeyMonitor {
                         .utf8
                 ))
         }
-        guard type == .flagsChanged else { return }
-        let pressed = event.flags.contains(mask)
+        let pressed: Bool
+
+        if let mask = hotkey.mask {
+            guard type == .flagsChanged else { return }
+            // For side-specific modifiers, ignore edges from the twin key on
+            // the other side — otherwise left option would trigger right-option.
+            if let want = hotkey.keyCode {
+                guard event.getIntegerValueField(.keyboardEventKeycode) == want else { return }
+            }
+            pressed = event.flags.contains(mask)
+        } else {
+            // Regular key: press/release arrive as separate event types, and
+            // holding one repeats keyDown, so drop the auto-repeats.
+            guard type == .keyDown || type == .keyUp else { return }
+            guard event.getIntegerValueField(.keyboardEventKeycode) == hotkey.keyCode else { return }
+            if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
+            pressed = (type == .keyDown)
+        }
+
         guard pressed != isPressed else { return }
         isPressed = pressed
         onEvent?(pressed ? .pressed : .released)
