@@ -2,10 +2,12 @@
 
 A minimal macOS dictation daemon. Push-to-talk, on-device transcription, text inserted at the cursor.
 
+Fork of [digimata/parrot](https://github.com/digimata/parrot) by Andrew Jones — the original is his, and it's a nice piece of work. I added a configurable push-to-talk key, a vocabulary file for terms Whisper keeps mishearing, and menu bar settings so you don't have to pass flags every time.
+
 ## Install
 
 ```sh
-curl -fsSL https://digimata.github.io/parrot/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/artsiomshaitar/parrot/master/scripts/install.sh | sh
 parrot setup                       # grants mic + accessibility, downloads the model
 parrot install --launch-at-login   # optional — runs in the background on login
 ```
