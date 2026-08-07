@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # parrot installer.
-#   curl -fsSL https://digimata.github.io/parrot/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/artsiomshaitar/parrot/master/scripts/install.sh | sh
 #
 # Fetches the latest arm64 macOS binary from GitHub Releases, drops it
 # in /usr/local/bin, and strips the quarantine xattr so Gatekeeper doesn't
@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO="digimata/parrot"
+REPO="artsiomshaitar/parrot"
 BIN_NAME="parrot"
 INSTALL_DIR="/usr/local/bin"
 ASSET="parrot-macos-arm64.tar.gz"
@@ -33,7 +33,7 @@ if [ "$ARCH" != "arm64" ]; then
     exit 1
 fi
 
-for cmd in curl tar; do
+for cmd in curl tar shasum; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         red "missing dependency: $cmd"
         exit 1
@@ -61,6 +61,18 @@ trap 'rm -rf "$TMP"' EXIT
 
 dim "→ downloading ${ASSET}..."
 curl -fsSL "$URL" -o "$TMP/${ASSET}"
+
+# the .sha256 lives in the same release as the tarball, so this proves nothing
+# about provenance — anyone who can swap the binary can swap the checksum beside
+# it. What it does catch is a truncated download or a tamper below the release
+# layer. Real provenance needs a signature over the checksum with a key that
+# isn't published alongside it.
+dim "→ verifying checksum..."
+curl -fsSL "${URL}.sha256" -o "$TMP/${ASSET}.sha256"
+if ! ( cd "$TMP" && shasum -a 256 -c "${ASSET}.sha256" >/dev/null 2>&1 ); then
+    red "checksum mismatch — refusing to install"
+    exit 1
+fi
 
 dim "→ extracting..."
 tar -xzf "$TMP/${ASSET}" -C "$TMP"
