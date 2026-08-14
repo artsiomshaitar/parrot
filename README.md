@@ -74,6 +74,8 @@ When a mishearing isn't phonetically close to the term — "my sequel" for MySQL
 my sequel => MySQL
 ```
 
+The menu bar has a **Dictionary…** item showing what's loaded (`Dictionary… (61 terms, 3 rules)`). Clicking it opens the file in your editor — and saving takes effect immediately, no restart.
+
 Check your file against real sentences without dictating:
 
 ```sh

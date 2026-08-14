@@ -47,21 +47,31 @@ final class MenuBarController: NSObject {
     private let onSelectModel: (String) -> Void
     private let onSelectHotkey: (Hotkey) -> Void
     private let onToggleLaunchAtLogin: () -> Void
+    private let onEditVocabulary: () -> Void
     private let launchAtLoginItem: NSMenuItem
+    private let vocabularyItem: NSMenuItem
 
     init(
         modelID: String,
         hotkey: Hotkey,
         launchAtLogin: Bool,
+        vocabularySummary: String,
         onSelectModel: @escaping (String) -> Void,
         onSelectHotkey: @escaping (Hotkey) -> Void,
-        onToggleLaunchAtLogin: @escaping () -> Void
+        onToggleLaunchAtLogin: @escaping () -> Void,
+        onEditVocabulary: @escaping () -> Void
     ) {
         self.modelID = modelID
         self.hotkey = hotkey
         self.onSelectModel = onSelectModel
         self.onSelectHotkey = onSelectHotkey
         self.onToggleLaunchAtLogin = onToggleLaunchAtLogin
+        self.onEditVocabulary = onEditVocabulary
+        self.vocabularyItem = NSMenuItem(
+            title: "Dictionary…",
+            action: #selector(editVocabularyClicked),
+            keyEquivalent: ""
+        )
         self.launchAtLoginItem = NSMenuItem(
             title: "Start at login",
             action: #selector(launchAtLoginClicked),
@@ -92,6 +102,9 @@ final class MenuBarController: NSObject {
         menu.addItem(hotkeyItem)
         menu.setSubmenu(hotkeyMenu, for: hotkeyItem)
 
+        vocabularyItem.target = self
+        menu.addItem(vocabularyItem)
+
         menu.addItem(.separator())
 
         launchAtLoginItem.target = self
@@ -107,6 +120,7 @@ final class MenuBarController: NSObject {
 
         buildModelMenu()
         buildHotkeyMenu()
+        setVocabularySummary(vocabularySummary)
         refreshStateLabel()
         configureButton()
         // Disk state can change without going through this class — the startup
@@ -200,6 +214,16 @@ final class MenuBarController: NSObject {
 
     @objc private func launchAtLoginClicked() {
         onToggleLaunchAtLogin()
+    }
+
+    @objc private func editVocabularyClicked() {
+        onEditVocabulary()
+    }
+
+    /// Reflects what was actually loaded, so a file with a typo in it shows the
+    /// count that survived parsing rather than the one you expected.
+    func setVocabularySummary(_ summary: String) {
+        vocabularyItem.title = "Dictionary… (\(summary))"
     }
 
     /// Reflects what's actually on disk, so a failed write doesn't leave the

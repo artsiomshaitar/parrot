@@ -4,7 +4,7 @@ import WhisperKit
 actor WhisperKitTranscriber: Transcriber {
     let modelID: String
     private let model: TranscriptionModel
-    private let vocabulary: Vocabulary?
+    private var vocabulary: Vocabulary?
     /// BCP-47-ish language code ("en", "ru", …). nil lets Whisper auto-detect,
     /// which is unreliable on the short clips push-to-talk produces.
     private let language: String?
@@ -75,6 +75,13 @@ actor WhisperKitTranscriber: Transcriber {
         }
 
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
+    }
+
+    /// Swaps in a re-read vocabulary file. Only the transcript rewriting picks
+    /// this up live; `--prompt-terms` tokens are encoded at warmup and stay put
+    /// until the model reloads.
+    func updateVocabulary(_ vocabulary: Vocabulary?) {
+        self.vocabulary = vocabulary
     }
 
     func transcribe(_ audio: [Float]) async throws -> String {

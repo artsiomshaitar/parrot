@@ -11,7 +11,12 @@ import Foundation
 final class Daemon {
     private let capture = AudioCapture()
     private let overlay: RecordingOverlay?
-    private let vocabulary: Vocabulary?
+    private let vocabPath: String
+    private var vocabulary: Vocabulary?
+    /// mtime of the vocabulary file as of the last load, so we only re-parse
+    /// when it actually changed.
+    private var vocabModified: Date?
+    private var vocabWatch: Timer?
     private let language: String?
     private let usePromptTerms: Bool
     private let dumpWav: Bool
@@ -30,6 +35,7 @@ final class Daemon {
         transcriber: WhisperKitTranscriber,
         hotkey: Hotkey,
         vocabulary: Vocabulary?,
+        vocabPath: String,
         language: String?,
         usePromptTerms: Bool,
         overlay: RecordingOverlay?,
@@ -40,6 +46,8 @@ final class Daemon {
         self.transcriber = transcriber
         self.hotkey = hotkey
         self.vocabulary = vocabulary
+        self.vocabPath = vocabPath
+        self.vocabModified = Self.modifiedAt(vocabPath)
         self.language = language
         self.usePromptTerms = usePromptTerms
         self.overlay = overlay
@@ -54,10 +62,72 @@ final class Daemon {
             modelID: model.id,
             hotkey: hotkey,
             launchAtLogin: LaunchAgent.isEnabled,
+            vocabularySummary: Self.summary(vocabulary),
             onSelectModel: { [weak self] id in self?.selectModel(id) },
             onSelectHotkey: { [weak self] key in self?.selectHotkey(key) },
-            onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() }
+            onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
+            onEditVocabulary: { [weak self] in self?.editVocabulary() }
         )
+        startWatchingVocabulary()
+    }
+
+    // MARK: - Vocabulary
+
+    private static func summary(_ vocabulary: Vocabulary?) -> String {
+        guard let vocabulary, !vocabulary.isEmpty else { return "empty" }
+        var parts = ["\(vocabulary.terms.count) term\(vocabulary.terms.count == 1 ? "" : "s")"]
+        if !vocabulary.replacements.isEmpty {
+            parts.append("\(vocabulary.replacements.count) rule\(vocabulary.replacements.count == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private static func modifiedAt(_ path: String) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
+    }
+
+    /// Opens the vocabulary in whatever handles .txt, creating it first if it
+    /// doesn't exist yet.
+    private func editVocabulary() {
+        do {
+            try Vocabulary.ensureExists(at: vocabPath)
+        } catch {
+            logLine("couldn't create \(vocabPath): \(error)")
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: vocabPath))
+    }
+
+    /// Polls the modification date rather than watching the file descriptor.
+    /// Editors save atomically — write a temp file, rename it over the original
+    /// — which replaces the inode and leaves an fd-based watch pointing at a
+    /// file nobody will ever write to again. One stat every two seconds is
+    /// cheaper than getting that right.
+    private func startWatchingVocabulary() {
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadVocabularyIfChanged() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        vocabWatch = timer
+    }
+
+    private func reloadVocabularyIfChanged() {
+        let modified = Self.modifiedAt(vocabPath)
+        guard modified != vocabModified else { return }
+        vocabModified = modified
+
+        let reloaded: Vocabulary?
+        do {
+            reloaded = try Vocabulary.load(path: vocabPath, required: false)
+        } catch {
+            logLine("vocabulary reload failed, keeping previous: \(error)")
+            return
+        }
+        vocabulary = reloaded
+        menuBar.setVocabularySummary(Self.summary(reloaded))
+        let transcriber = self.transcriber
+        Task { await transcriber.updateVocabulary(reloaded) }
+        logLine("vocabulary reloaded: \(Self.summary(reloaded))")
     }
 
     private func toggleLaunchAtLogin() {

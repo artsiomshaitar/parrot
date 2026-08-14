@@ -136,6 +136,7 @@ struct Run: ParsableCommand {
                 transcriber: transcriber,
                 hotkey: chosenHotkey,
                 vocabulary: vocabulary,
+                vocabPath: vocab ?? Vocabulary.defaultPath,
                 language: language,
                 usePromptTerms: promptTerms,
                 overlay: noOverlay ? nil : RecordingOverlay(),

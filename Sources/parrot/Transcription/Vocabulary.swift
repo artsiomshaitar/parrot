@@ -34,6 +34,43 @@ struct Vocabulary {
         NSString(string: "~/.config/parrot/vocab.txt").expandingTildeInPath
     }
 
+    /// Written when the menu opens a vocabulary that doesn't exist yet — an
+    /// empty file would leave you guessing at the format.
+    static let template = """
+    # parrot vocabulary
+    #
+    # Terms are matched by SOUND. One line covers every way the model mangles
+    # it: "PostHog" catches "post hog", "post hawk", "post hogg" and variants
+    # you haven't hit yet.
+    #
+    #   PostHog
+    #   Kubernetes
+    #   TypeScript
+    #
+    # For mishearings that don't sound close to the term, use an exact rule.
+    # These run first and always win:
+    #
+    #   my sequel => MySQL
+    #
+    # Saving this file reloads it — no restart needed.
+    # Test without talking:  parrot vocab test "the post hawk dashboard"
+
+
+    """
+
+    /// Creates the file with the template if it's missing. Returns the path.
+    @discardableResult
+    static func ensureExists(at path: String) throws -> String {
+        guard !FileManager.default.fileExists(atPath: path) else { return path }
+        let url = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try template.write(to: url, atomically: true, encoding: .utf8)
+        return path
+    }
+
     /// Loads vocabulary from `path`.
     ///
     /// When `required` is false a missing file yields `nil` rather than an
