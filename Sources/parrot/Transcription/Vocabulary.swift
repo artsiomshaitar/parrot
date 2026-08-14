@@ -4,9 +4,11 @@ import Foundation
 ///
 /// Two mechanisms in one file, because they fix different problems:
 ///
-///   * **Terms** are fed to Whisper as a conditioning prompt, biasing the
-///     decoder toward spellings it would otherwise never produce. A bias, not
-///     a guarantee.
+///   * **Terms** are matched phonetically against the finished transcript, so
+///     one line (`PostHog`) covers "post hog", "post hawk", "post hogg" and
+///     every variant nobody has hit yet. (They can also be fed to Whisper as a
+///     conditioning prompt via `--prompt-terms`, but that suppresses the words
+///     it is meant to reinforce — see WhisperKitTranscriber.)
 ///   * **Replacements** (`misheard => Correct`) are applied to the finished
 ///     transcript. Exact and deterministic — the right tool for a word the
 ///     model gets wrong the same way every time.
@@ -23,6 +25,8 @@ import Foundation
 struct Vocabulary {
     let terms: [String]
     let replacements: [(from: String, to: String)]
+    /// Built once at load — matching is then a dictionary lookup per phrase.
+    let matcher: PhoneticMatcher
 
     var isEmpty: Bool { terms.isEmpty && replacements.isEmpty }
 
@@ -72,16 +76,31 @@ struct Vocabulary {
                 addTerm(line)
             }
         }
-        return Vocabulary(terms: terms, replacements: replacements)
+        return Vocabulary(
+            terms: terms,
+            replacements: replacements,
+            matcher: PhoneticMatcher(terms: terms)
+        )
     }
 
     /// Comma-joined enumeration. Whisper conditions on natural text, so a list
     /// reads better to the model than one term per line.
     var promptText: String { terms.joined(separator: ", ") }
 
+    /// Exact replacements first, then the phonetic pass over what's left.
+    ///
+    /// Order matters: an explicit `=>` rule is a decision the user made and
+    /// always wins. Phonetics only gets to see text no rule claimed, so this
+    /// can add corrections but never override one already trusted.
+    func apply(to text: String, phonetic: Bool = true) -> String {
+        var out = applyReplacements(to: text)
+        if phonetic { out = matcher.apply(to: out) }
+        return out
+    }
+
     /// Applies replacements case-insensitively on word boundaries. Longest
     /// `from` first, so a specific phrase wins over a substring of itself.
-    func apply(to text: String) -> String {
+    func applyReplacements(to text: String) -> String {
         var out = text
         for r in replacements.sorted(by: { $0.from.count > $1.from.count }) {
             let pattern = "\\b\(NSRegularExpression.escapedPattern(for: r.from))\\b"

@@ -40,6 +40,46 @@ parrot models download <id>            # pre-download a model
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
+parrot vocab test "the post hawk API"  # try the vocabulary without talking
+parrot vocab show                      # list loaded terms and their sound keys
+```
+
+## Vocabulary
+
+Whisper has no idea how your stack is spelled. It hears "PostHog" and writes
+"Post Hawk", "post hogg", "Post-Hog" — a different way each time.
+
+Put the term in `~/.config/parrot/vocab.txt`, one per line:
+
+```
+PostHog
+Kubernetes
+TypeScript
+```
+
+Terms are matched by **sound**, not spelling, so one line covers every
+mangling — including the ones you haven't seen yet. "post hawk", "kuber netes"
+and "type script" all land correctly without a rule for each.
+
+Two guards keep it honest: a phrase has to both sound like the term *and* be
+spelled close to it, and a single ordinary English word is never rewritten. So
+"the cores are hot" doesn't become "the CORS are hot", and "I called the car
+dealer" survives intact. Measured on 7,950 lines of English prose: two changes,
+both correct.
+
+When a mishearing isn't phonetically close to the term — "my sequel" for MySQL
+— use an exact rule instead. These run first and always win:
+
+```
+my sequel => MySQL
+```
+
+Check your file against real sentences without dictating:
+
+```sh
+parrot vocab test "let's look at the post hawk dashboard"   # → ... PostHog dashboard
+parrot vocab test --explain "kuber netes"                   # shows key + score
+pbpaste | parrot vocab test --changed-only                  # audit a whole document
 ```
 
 ## Stack
