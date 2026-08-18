@@ -1,8 +1,7 @@
 import ArgumentParser
 import Foundation
 
-/// CLI front-end for `LaunchAgent`. The same toggle is available from the menu
-/// bar while parrot is running.
+/// CLI front-end for `LaunchAgent`; the menu bar offers the same toggle.
 struct Install: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Install or remove the launch-at-login LaunchAgent."
@@ -16,9 +15,7 @@ struct Install: ParsableCommand {
 
     func run() throws {
         if launchAtLogin == uninstall {
-            FileHandle.standardError.write(Data(
-                "specify exactly one of --launch-at-login or --uninstall\n".utf8
-            ))
+            logLine("specify exactly one of --launch-at-login or --uninstall")
             throw ExitCode(64)
         }
 
@@ -29,8 +26,6 @@ struct Install: ParsableCommand {
                 print("nothing to remove (no agent at \(LaunchAgent.plistURL.path))")
             }
         } else {
-            // This command runs as its own short-lived process, so bootstrapping
-            // is safe and starts the daemon right away.
             try LaunchAgent.enable(bootstrap: true)
             print("✓ launch-at-login installed")
             print("  plist:  \(LaunchAgent.plistURL.path)")

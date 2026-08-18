@@ -6,9 +6,9 @@ import WhisperKit
 @main
 struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "parrot",
+        commandName: AppIdentity.executableName,
         abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
-        subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Vocab.self, Install.self],
+        subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Vocab.self, MicProbe.self, Install.self],
         defaultSubcommand: Run.self
     )
 }
@@ -27,6 +27,16 @@ struct Run: ParsableCommand {
 
     @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
     var dumpWav: Bool = false
+
+    @Flag(name: .long, help: "Log microphone acquire/release with timestamps (debug).")
+    var debugMic: Bool = false
+
+    @Option(
+        name: .long,
+        help: "Keep the mic open this many seconds after a dictation, so a follow-up doesn't re-switch a Bluetooth headset. 0 releases immediately."
+    )
+    var micHold: Double = 3
+
 
     @Flag(name: .long, help: "Disable the on-screen recording overlay.")
     var noOverlay: Bool = false
@@ -59,16 +69,16 @@ struct Run: ParsableCommand {
     var promptTerms: Bool = false
 
     func run() throws {
-        // CLI flag → saved preference → built-in default.
+        if debugMic { LogOptions.timestamps = true }
         let config = Config.load()
         let chosenHotkey = hotkey ?? config.resolvedHotkey ?? .fn
 
         if !skipDoctor {
             let checks = DoctorReport.run(hotkey: chosenHotkey)
             if !DoctorReport.allOK(checks) {
-                FileHandle.standardError.write(Data("startup checks failed:\n".utf8))
+                logLine("startup checks failed:")
                 DoctorReport.print(checks)
-                FileHandle.standardError.write(Data("\nfix the above or pass --skip-doctor\n".utf8))
+                logLine("\nfix the above or pass --skip-doctor")
                 throw ExitCode(1)
             }
         }
@@ -76,14 +86,14 @@ struct Run: ParsableCommand {
         let chosenModel: TranscriptionModel
         if let id = model ?? config.model {
             guard let m = ModelRegistry.find(id) else {
-                FileHandle.standardError.write(Data("unknown model: \(id)\n".utf8))
-                FileHandle.standardError.write(Data("run `parrot models list` to see options.\n".utf8))
+                logLine("unknown model: \(id)")
+                logLine("run `parrot models list` to see options.")
                 throw ExitCode(1)
             }
             chosenModel = m
         } else {
             guard let m = ModelRegistry.recommended() else {
-                FileHandle.standardError.write(Data("no models registered\n".utf8))
+                logLine("no models registered")
                 throw ExitCode(1)
             }
             chosenModel = m
@@ -96,13 +106,11 @@ struct Run: ParsableCommand {
                 required: vocab != nil
             )
         } catch {
-            FileHandle.standardError.write(Data("\(error)\n".utf8))
+            logLine("\(error)")
             throw ExitCode(1)
         }
         if let vocabulary {
-            FileHandle.standardError.write(Data(
-                "vocabulary: \(vocabulary.terms.count) term(s), \(vocabulary.replacements.count) replacement(s)\n".utf8
-            ))
+            logLine("vocabulary: \(vocabulary.terms.count) term(s), \(vocabulary.replacements.count) replacement(s)")
         }
 
         let transcriber = WhisperKitTranscriber(
@@ -123,7 +131,7 @@ struct Run: ParsableCommand {
         }
         warmupSemaphore.wait()
         if let warmupError {
-            FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
+            logLine("warmup failed: \(warmupError)")
             throw ExitCode(1)
         }
 
@@ -141,21 +149,23 @@ struct Run: ParsableCommand {
                 usePromptTerms: promptTerms,
                 overlay: noOverlay ? nil : RecordingOverlay(),
                 dumpWav: dumpWav,
-                debugHotkey: debugHotkey
+                debugHotkey: debugHotkey,
+                debugMic: debugMic,
+                micHold: micHold
             )
         }
 
         do {
             try MainActor.assumeIsolated { try daemon.start() }
         } catch {
-            FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
-            FileHandle.standardError.write(Data("run `parrot setup` to configure permissions.\n".utf8))
+            logLine("failed to register hotkey tap: \(error)")
+            logLine("run `parrot setup` to configure permissions.")
             throw ExitCode(1)
         }
 
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigint.setEventHandler {
-            FileHandle.standardError.write(Data("\nshutting down\n".utf8))
+            logLine("\nshutting down")
             MainActor.assumeIsolated { daemon.stop() }
             NSApp.terminate(nil)
         }

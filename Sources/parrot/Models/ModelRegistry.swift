@@ -1,10 +1,6 @@
 import Foundation
 
 /// Built-in transcription model registry.
-///
-/// The model list lives directly in source rather than as a JSON resource so
-/// the binary stays self-contained — no `Bundle.module` lookup, no per-target
-/// resource bundle to ship alongside the executable.
 enum ModelRegistry {
     static let shared: [TranscriptionModel] = [
         TranscriptionModel(

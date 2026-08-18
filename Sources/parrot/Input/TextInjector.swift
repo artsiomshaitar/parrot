@@ -1,14 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// Posts a string of text at the current cursor location by synthesizing
-/// keyboard events with `CGEventKeyboardSetUnicodeString`. Works in nearly
-/// every text field on macOS; some Electron apps and secure password fields
-/// can drop characters (platform constraint).
+/// Types text at the cursor by synthesizing key events.
 enum TextInjector {
-    /// Inject the given text at the current cursor location.
-    /// Splits long strings into chunks because the underlying API has a
-    /// per-event character limit (~20 chars).
     static func inject(_ text: String) {
         guard !text.isEmpty else { return }
 

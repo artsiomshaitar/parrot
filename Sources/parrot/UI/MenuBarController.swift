@@ -1,16 +1,9 @@
 import AppKit
 
 /// Status bar item in the top-right of the menu bar. Shows recording state at
-/// a glance and provides the only persistent control surface for the daemon
-/// (since we run as `.accessory` — no dock icon, no main window).
-///
-/// The Model and Hotkey submenus write straight through to `Config`, so a
-/// selection here is what parrot uses on every future launch — including when
-/// started by the LaunchAgent, which passes no arguments.
 @MainActor
 final class MenuBarController: NSObject {
     /// Hotkeys offered in the menu. The full set (f1…f20, keycode:N) stays
-    /// CLI-only — a twenty-entry submenu would be noise.
     static let selectableHotkeys: [Hotkey] = [
         .rightCommand, .rightOption, .rightControl, .rightShift, .leftOption, .fn,
     ]
@@ -23,25 +16,23 @@ final class MenuBarController: NSObject {
 
     private var modelID: String
     private var hotkey: Hotkey
-    private var idleTitle: String { "idle · hold \(hotkey.label) to dictate" }
+    private var idleTitle: String {
+        let prefix = AppIdentity.isDev ? "\(AppIdentity.executableName) · " : ""
+        return "\(prefix)idle · hold \(hotkey.label) to dictate"
+    }
 
     /// The model currently being fetched, and how far along. Separate from
-    /// `modelID`, which only moves once the new model is actually loaded.
     private var downloading: (id: String, fraction: Double)?
     /// Set while a model is downloading or loading; outlives a single dictation
-    /// turn, unlike `activity`.
     private var modelStatus: String?
     /// Recording or transcribing — transient, and takes the label while it lasts.
     private var activity: String?
 
     /// Braille frames rather than an NSProgressIndicator: a real spinner needs
-    /// `NSMenuItem.view`, which means drawing the highlight and title by hand
-    /// and losing the standard menu appearance. This is one glyph in the title.
     private static let spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     private var spinnerFrame = 0
     private var spinnerTimer: Timer?
     /// The spinner is only visible while the submenu is open, so it only ticks
-    /// then — no 10 Hz wakeups for a menu nobody is looking at.
     private var modelMenuIsOpen = false
 
     private let onSelectModel: (String) -> Void
@@ -85,8 +76,6 @@ final class MenuBarController: NSObject {
 
         stateLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
-        // NSMenuDelegate is an NSObject protocol, so this class is an NSObject
-        // subclass and owes super a call before it can touch its own members.
         super.init()
 
         stateLabel.isEnabled = false
@@ -123,9 +112,6 @@ final class MenuBarController: NSObject {
         setVocabularySummary(vocabularySummary)
         refreshStateLabel()
         configureButton()
-        // Disk state can change without going through this class — the startup
-        // warmup downloads the configured model, for one — so re-read it each
-        // time the submenu opens rather than trusting a cached answer.
         modelMenu.delegate = self
     }
 
@@ -148,8 +134,6 @@ final class MenuBarController: NSObject {
     }
 
     /// Titles are rewritten in place rather than rebuilt, so progress can tick
-    /// while the submenu is open without items flickering out from under the
-    /// cursor.
     private func refreshModelItems() {
         for (item, model) in zip(modelItems, ModelRegistry.shared) {
             item.title = "\(model.displayName) · \(detail(for: model))"
@@ -166,8 +150,7 @@ final class MenuBarController: NSObject {
         return "\(model.sizeMB) MB · not downloaded"
     }
 
-    /// Runs the spinner only while there's a download to show and a submenu to
-    /// show it in.
+    /// Runs only while a download is visible in an open submenu.
     private func updateSpinner() {
         let shouldRun = downloading != nil && modelMenuIsOpen
         guard shouldRun else {
@@ -184,9 +167,6 @@ final class MenuBarController: NSObject {
                 self.refreshModelItems()
             }
         }
-        // An open menu runs the run loop in .eventTracking, so a timer left in
-        // the default mode would sit frozen for exactly as long as the menu is
-        // visible — the only time the spinner matters.
         RunLoop.main.add(timer, forMode: .eventTracking)
         RunLoop.main.add(timer, forMode: .common)
         spinnerTimer = timer
@@ -220,14 +200,12 @@ final class MenuBarController: NSObject {
         onEditVocabulary()
     }
 
-    /// Reflects what was actually loaded, so a file with a typo in it shows the
-    /// count that survived parsing rather than the one you expected.
+    /// Reflects what actually parsed, not what the file appears to contain.
     func setVocabularySummary(_ summary: String) {
         vocabularyItem.title = "Dictionary… (\(summary))"
     }
 
-    /// Reflects what's actually on disk, so a failed write doesn't leave the
-    /// checkmark lying about the state.
+    /// Reflects what's on disk, so a failed write can't leave the state lying.
     func setLaunchAtLogin(_ enabled: Bool) {
         launchAtLoginItem.state = enabled ? .on : .off
     }
@@ -242,8 +220,6 @@ final class MenuBarController: NSObject {
     // MARK: - State
 
     /// Dictation state wins the label while it's happening, but a model
-    /// download outlives it — so the two are tracked separately and the label
-    /// is derived, rather than each caller overwriting a shared string.
     private func refreshStateLabel() {
         stateLabel.title = activity ?? modelStatus ?? idleTitle
     }
@@ -259,7 +235,6 @@ final class MenuBarController: NSObject {
     }
 
     /// Called once the new model is actually loaded, not when it's picked —
-    /// the checkmark should track reality, not intent.
     func setModel(_ id: String) {
         modelID = id
         downloading = nil
@@ -278,7 +253,6 @@ final class MenuBarController: NSObject {
     }
 
     /// Ignores sub-percent ticks — WhisperKit reports progress far more often
-    /// than a menu can usefully show it.
     func setDownloadProgress(_ id: String, _ fraction: Double) {
         let percent = Int(fraction * 100)
         if let downloading, downloading.id == id, Int(downloading.fraction * 100) == percent { return }
@@ -304,8 +278,6 @@ final class MenuBarController: NSObject {
         button.image = image
     }
 
-    // Inlined Lucide bird SVG. Keeping it in source means the executable has
-    // no separate resource bundle to install alongside it — true single-binary.
     private static let birdSVG = """
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" \
     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" \
@@ -323,7 +295,6 @@ final class MenuBarController: NSObject {
         guard let data = birdSVG.data(using: .utf8),
               let image = NSImage(data: data)
         else { return nil }
-        // Menu-bar status icons are nominally 18pt tall; size the SVG to match.
         image.size = NSSize(width: 16, height: 16)
         return image
     }

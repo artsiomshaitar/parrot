@@ -16,9 +16,7 @@ struct Check {
 }
 
 enum DoctorReport {
-    /// The Fn-mapping check only applies when Fn *is* the hotkey; on any other
-    /// key macOS isn't intercepting anything, so including it would hard-fail
-    /// startup over an irrelevant setting.
+    /// The Fn-mapping check only applies when Fn is the hotkey.
     static func run(hotkey: Hotkey = .fn) -> [Check] {
         var checks = [checkMicrophone(), checkAccessibility()]
         if hotkey == .fn {
@@ -62,7 +60,6 @@ enum DoctorReport {
     }
 
     /// macOS routes Fn (🌐) to one of: Do Nothing / Change Input Source / Show Emoji / Start Dictation.
-    /// We need "Do Nothing" so Fn is a clean modifier.
     static func checkFnKeyMapping() -> Check {
         let raw = readDefault(domain: "com.apple.HIToolbox", key: "AppleFnUsageType")
         guard let raw, let value = Int(raw) else {

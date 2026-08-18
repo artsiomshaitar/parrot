@@ -1,15 +1,8 @@
 import Foundation
 
 /// Manage parrot's LaunchAgent so the daemon starts at login.
-///
-/// We deliberately do NOT use SMAppService.mainApp here — that requires a full
-/// .app bundle. Since parrot ships as a single binary in /usr/local/bin, a
-/// plain LaunchAgent plist is the simpler, more honest mechanism.
-///
-/// The plist passes no flags beyond `--skip-doctor`, so a login-started parrot
-/// takes its model and hotkey from `~/.config/parrot/config.json`.
 enum LaunchAgent {
-    static let label = "com.artsiomshaitar.parrot"
+    static var label: String { AppIdentity.launchAgentLabel }
 
     enum AgentError: Error, CustomStringConvertible {
         case binaryNotFound
@@ -17,7 +10,7 @@ enum LaunchAgent {
         var description: String {
             switch self {
             case .binaryNotFound:
-                return "couldn't locate the parrot binary; install it to /usr/local/bin/parrot first"
+                return "couldn't locate the \(AppIdentity.executableName) binary; install it to /usr/local/bin first"
             }
         }
     }
@@ -28,22 +21,13 @@ enum LaunchAgent {
             .appendingPathComponent("\(label).plist")
     }
 
-    /// Enabled means "the plist is on disk" — that's what determines whether
-    /// launchd starts parrot at the next login.
+    /// Enabled means the plist is on disk.
     static var isEnabled: Bool {
         FileManager.default.fileExists(atPath: plistURL.path)
     }
 
-    /// True when this process was started by launchd rather than a shell.
-    /// launchd-spawned agents are reparented to pid 1.
     static var isManagedByLaunchd: Bool { getppid() == 1 }
 
-    /// Writes the plist.
-    ///
-    /// `bootstrap` loads it immediately, which also *starts* a copy because the
-    /// plist sets `RunAtLoad`. Callers that are themselves a running parrot
-    /// must pass false, or the user ends up with two daemons fighting over the
-    /// hotkey and microphone.
     static func enable(bootstrap: Bool) throws {
         let binary = try resolveBinaryPath()
 
@@ -53,8 +37,8 @@ enum LaunchAgent {
             "RunAtLoad": true,
             "KeepAlive": ["SuccessfulExit": false] as [String: Any],
             "ProcessType": "Interactive",
-            "StandardOutPath": "/tmp/parrot.out.log",
-            "StandardErrorPath": "/tmp/parrot.err.log",
+            "StandardOutPath": "/tmp/\(AppIdentity.profile).out.log",
+            "StandardErrorPath": "/tmp/\(AppIdentity.profile).err.log",
         ]
 
         let url = plistURL
@@ -77,11 +61,6 @@ enum LaunchAgent {
         }
     }
 
-    /// Removes the plist.
-    ///
-    /// Only boots the agent out when we aren't the agent — otherwise launchctl
-    /// would terminate the very process asking to be disabled. Removing the
-    /// plist is enough to stop it coming back at the next login.
     @discardableResult
     static func disable() throws -> Bool {
         let url = plistURL
@@ -94,10 +73,12 @@ enum LaunchAgent {
     }
 
     static func resolveBinaryPath() throws -> String {
-        // /usr/local/bin/parrot is the canonical install path. Honor a real
-        // location if running from elsewhere (e.g. dev).
-        let candidate = "/usr/local/bin/parrot"
-        if FileManager.default.isExecutableFile(atPath: candidate) {
+        let name = AppIdentity.executableName
+        let candidates = [
+            "/usr/local/bin/\(name)",
+            NSString(string: "~/.local/bin/\(name)").expandingTildeInPath,
+        ]
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate
         }
         let argv0 = CommandLine.arguments.first ?? "parrot"

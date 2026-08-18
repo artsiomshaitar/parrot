@@ -67,12 +67,23 @@ spelled close to it, and a single ordinary English word is never rewritten. So
 dealer" survives intact. Measured on 7,950 lines of English prose: two changes,
 both correct.
 
-When a mishearing isn't phonetically close to the term — "my sequel" for MySQL
-— use an exact rule instead. These run first and always win:
+When a mishearing isn't close enough to the term, declare it yourself. Rules
+are matched by sound as well, so one rule covers its own family of manglings —
+`super base => Supabase` also catches "Superbass" and "Superbase". Rules run
+first and always win:
 
 ```
 my sequel => MySQL
+super base => Supabase
 ```
+
+Use `~>` instead of `=>` to allow one sound of slack. That's enough to reach
+things plain matching can't — `v auto ~> vAuto` catches "V alto" — but it's
+also strong enough to rewrite ordinary words, so it's opt-in per rule. The
+ordinary-word guard still applies unless the word is exactly what the rule
+declares: `deal er ~> Deelr` leaves "auto" and "dollar" alone, while
+`dealer ~> Deelr` will rewrite every "dealer" you say, car dealerships
+included.
 
 The menu bar has a **Dictionary…** item showing what's loaded (`Dictionary… (61 terms, 3 rules)`). Clicking it opens the file in your editor — and saving takes effect immediately, no restart.
 
@@ -100,4 +111,25 @@ See [docs/architecture.md](docs/architecture.md) for design notes.
 ```sh
 swift build -c release
 .build/release/parrot --help
+```
+
+## Development
+
+```sh
+swift test              # unit tests
+./scripts/dev.sh        # build + install as `parrot-dev`, alongside the release copy
+./scripts/dev.sh --run  # ...and start it
+```
+
+`parrot-dev` keeps its own settings and LaunchAgent label, and shares your
+vocabulary file — so you can run it without disturbing the installed copy. The
+binary's name is the only switch: anything not called plain `parrot` behaves as
+a dev build.
+
+Useful while working on capture:
+
+```sh
+parrot-dev --debug-mic          # timestamped mic acquire/release + codec changes
+parrot-dev mic-probe            # measure how long the mic is held after a capture
+parrot-dev mic-probe --watch-only   # watch another process hold the device
 ```

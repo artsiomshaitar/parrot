@@ -4,8 +4,6 @@ import CoreGraphics
 import Foundation
 
 /// Watches a single modifier key (default: Fn) and emits press/release edges.
-/// Requires Accessibility permission. If the tap fails to register, callers
-/// will see an error from `start()`.
 final class HotkeyMonitor {
     enum Event { case pressed, released }
     enum HotkeyError: Error { case tapCreateFailed }
@@ -29,9 +27,7 @@ final class HotkeyMonitor {
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
         if !trusted {
-            FileHandle.standardError.write(Data(
-                "accessibility not granted — system prompt opened. Grant access, then quit and relaunch parrot.\n".utf8
-            ))
+            logLine("accessibility not granted — system prompt opened. Grant access, then quit and relaunch parrot.")
             throw HotkeyError.tapCreateFailed
         }
 
@@ -41,8 +37,6 @@ final class HotkeyMonitor {
             | (1 << CGEventType.keyUp.rawValue)
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
-        // .cgSessionEventTap is the right level for an accessibility-granted
-        // user process (.cghidEventTap requires root).
         guard
             let tap = CGEvent.tapCreate(
                 tap: .cgSessionEventTap,
@@ -80,25 +74,17 @@ final class HotkeyMonitor {
         if debug {
             let flags = event.flags
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-            FileHandle.standardError.write(
-                Data(
-                    "  [debug] type=\(type.rawValue) keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))\n"
-                        .utf8
-                ))
+            logLine("  [debug] type=\(type.rawValue) keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))")
         }
         let pressed: Bool
 
         if let mask = hotkey.mask {
             guard type == .flagsChanged else { return }
-            // For side-specific modifiers, ignore edges from the twin key on
-            // the other side — otherwise left option would trigger right-option.
             if let want = hotkey.keyCode {
                 guard event.getIntegerValueField(.keyboardEventKeycode) == want else { return }
             }
             pressed = event.flags.contains(mask)
         } else {
-            // Regular key: press/release arrive as separate event types, and
-            // holding one repeats keyDown, so drop the auto-repeats.
             guard type == .keyDown || type == .keyUp else { return }
             guard event.getIntegerValueField(.keyboardEventKeycode) == hotkey.keyCode else { return }
             if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
@@ -121,8 +107,6 @@ private func hotkeyCallback(
     let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        // System disabled our tap; we'll need to re-enable. For now just no-op
-        // and let the user restart parrot.
         return Unmanaged.passUnretained(event)
     }
 

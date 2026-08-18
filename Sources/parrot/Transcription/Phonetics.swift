@@ -1,11 +1,6 @@
 import Foundation
 
-/// Metaphone: maps a word to how it sounds, so spellings that sound alike
-/// collapse to the same key ("hawk" and "hog" both → HK).
-///
-/// Plain Metaphone rather than Double Metaphone — validated against the real
-/// mishearings this is meant to fix, and the second code earned nothing there
-/// for twice the rule set.
+/// Maps a word to how it sounds, so spellings that sound alike collapse.
 enum Metaphone {
     private static let vowels: Set<Character> = ["A", "E", "I", "O", "U"]
     /// Letters that fuse with a following H into one sound, leaving the H silent.
@@ -15,8 +10,6 @@ enum Metaphone {
         var s = Array(input.uppercased().filter { $0.isASCII && $0.isLetter })
         guard !s.isEmpty else { return "" }
 
-        // Word-initial clusters where the first letter is silent, plus the two
-        // that change outright.
         if s.count >= 2 {
             switch String(s[0...1]) {
             case "AE", "GN", "KN", "PN", "WR":
@@ -34,7 +27,6 @@ enum Metaphone {
         let n = s.count
         for i in 0..<n {
             let c = s[i]
-            // Doubled letters sound once — except CC, which can be two sounds.
             if i > 0, s[i - 1] == c, c != "C" { continue }
 
             let prev: Character? = i > 0 ? s[i - 1] : nil
@@ -46,7 +38,6 @@ enum Metaphone {
                 if i == 0 { out.append(c) }
 
             case "B":
-                // Silent in the -MB ending ("thumb"), voiced elsewhere.
                 if !(i == n - 1 && prev == "M") { out.append("B") }
 
             case "C":
@@ -69,7 +60,6 @@ enum Metaphone {
 
             case "G":
                 if next == "H" {
-                    // Silent unless a vowel follows the H ("ghost" vs "night").
                     if let x = after, vowels.contains(x) { out.append("K") }
                 } else if next == "N" {
                     break  // gnome, sign
@@ -122,7 +112,6 @@ enum Metaphone {
                 out.append("F")
 
             case "W", "Y":
-                // Consonantal only before a vowel; otherwise part of the vowel.
                 if let x = next, vowels.contains(x) { out.append(c) }
 
             case "X":
@@ -139,9 +128,7 @@ enum Metaphone {
     }
 }
 
-/// Jaro-Winkler similarity, 0…1. Used as the second opinion alongside the
-/// phonetic key: sound-alike keys are deliberately lossy, so an orthographic
-/// check keeps "dollar" from becoming "Deelr".
+/// Jaro-Winkler similarity, 0…1.
 enum Similarity {
     static func jaroWinkler(_ a: String, _ b: String) -> Double {
         let s1 = Array(a), s2 = Array(b)
@@ -178,7 +165,6 @@ enum Similarity {
         let jaro = (m / Double(s1.count) + m / Double(s2.count)
             + (m - Double(transpositions) / 2) / m) / 3
 
-        // Winkler: reward a shared prefix, up to four characters.
         var prefix = 0
         for i in 0..<min(4, min(s1.count, s2.count)) {
             if s1[i] == s2[i] { prefix += 1 } else { break }

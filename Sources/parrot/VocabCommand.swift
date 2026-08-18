@@ -2,10 +2,6 @@ import ArgumentParser
 import Foundation
 
 /// `parrot vocab` — inspect and test the vocabulary without a microphone.
-///
-/// Correcting mishearings is a text-to-text problem, so it should be testable
-/// as one. Speaking into the mic to find out whether a threshold is right is a
-/// slow and unrepeatable way to work.
 struct Vocab: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Inspect and test the vocabulary.",
@@ -62,20 +58,18 @@ struct Vocab: ParsableCommand {
                 if explain {
                     if exact != line { print("    rule  \(line)  →  \(exact)") }
                     for m in vocabulary.matcher.matches(in: exact) {
-                        let key = PhoneticMatcher.splitWords(m.heard)
-                            .map { Metaphone.encode($0) }.joined()
+                        let key = PhoneticKey.of(phrase: m.heard)
+                        let via = m.rule.map { " via rule \"\($0)\"" } ?? ""
                         print(String(
-                            format: "    sound %@  →  %@   key %@  similarity %.2f",
-                            "\"\(m.heard)\"", m.term, key, m.similarity
+                            format: "    sound %@  →  %@   key %@  similarity %.2f%@",
+                            "\"\(m.heard)\"", m.term, key, m.similarity, via
                         ))
                     }
                 }
             }
 
             if lines.count > 1 {
-                FileHandle.standardError.write(
-                    Data("\n\(changed)/\(lines.count) line(s) changed\n".utf8)
-                )
+                logLine("\n\(changed)/\(lines.count) line(s) changed")
             }
         }
     }
@@ -98,16 +92,19 @@ struct Vocab: ParsableCommand {
             print("\(path)\n")
             print("terms (\(vocabulary.terms.count)) — matched by sound")
             for term in vocabulary.terms {
-                let keys = PhoneticMatcher.keys(for: term).sorted().joined(separator: " ")
-                let short = term.filter { $0.isASCII && $0.isLetter }.count < PhoneticMatcher.minTermLength
-                let note = short ? "   (too short for sound matching — use a => rule)" : ""
+                let keys = PhoneticKey.variants(of: term).sorted().joined(separator: " ")
+                let short = PhoneticKey.letters(of: term).count < PhoneticMatcher.minTermLength
+                let note = short ? "   (too short for sound matching — use a rule)" : ""
                 print("  \(term.padding(toLength: 20, withPad: " ", startingAt: 0)) \(keys)\(note)")
             }
 
             if !vocabulary.replacements.isEmpty {
-                print("\nrules (\(vocabulary.replacements.count)) — exact, applied first")
+                print("\nrules (\(vocabulary.replacements.count)) — matched by sound too, applied first")
                 for r in vocabulary.replacements {
-                    print("  \(r.from)  =>  \(r.to)")
+                    let arrow = r.fuzzy ? "~>" : "=>"
+                    let key = PhoneticKey.of(phrase: r.from)
+                    let slack = r.fuzzy ? "  (one sound of slack)" : ""
+                    print("  \(r.from.padding(toLength: 16, withPad: " ", startingAt: 0)) \(arrow)  \(r.to.padding(toLength: 14, withPad: " ", startingAt: 0)) \(key)\(slack)")
                 }
             }
         }

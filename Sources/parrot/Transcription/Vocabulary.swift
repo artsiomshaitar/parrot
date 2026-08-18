@@ -1,41 +1,27 @@
 import Foundation
 
 /// User-supplied vocabulary, loaded from a plain-text file.
-///
-/// Two mechanisms in one file, because they fix different problems:
-///
-///   * **Terms** are matched phonetically against the finished transcript, so
-///     one line (`PostHog`) covers "post hog", "post hawk", "post hogg" and
-///     every variant nobody has hit yet. (They can also be fed to Whisper as a
-///     conditioning prompt via `--prompt-terms`, but that suppresses the words
-///     it is meant to reinforce — see WhisperKitTranscriber.)
-///   * **Replacements** (`misheard => Correct`) are applied to the finished
-///     transcript. Exact and deterministic — the right tool for a word the
-///     model gets wrong the same way every time.
-///
-/// Format: one entry per line, `#` comments and blank lines ignored.
-///
-///     # terms to bias toward
-///     HogQL
-///     Postgres
-///
-///     # deterministic corrections
-///     deal er => Deelr
-///     post hog => PostHog
 struct Vocabulary {
+    /// A user-declared correction, matched by sound like everything else.
+    struct Replacement {
+        let from: String
+        let to: String
+        /// `~>` instead of `=>`: allow one phoneme of slack. Aggressive enough
+        let fuzzy: Bool
+    }
+
     let terms: [String]
-    let replacements: [(from: String, to: String)]
+    let replacements: [Replacement]
     /// Built once at load — matching is then a dictionary lookup per phrase.
     let matcher: PhoneticMatcher
 
     var isEmpty: Bool { terms.isEmpty && replacements.isEmpty }
 
     static var defaultPath: String {
-        NSString(string: "~/.config/parrot/vocab.txt").expandingTildeInPath
+        AppIdentity.sharedConfigDirectory + "/vocab.txt"
     }
 
-    /// Written when the menu opens a vocabulary that doesn't exist yet — an
-    /// empty file would leave you guessing at the format.
+    /// Written when the menu opens a vocabulary that doesn't exist yet.
     static let template = """
     # parrot vocabulary
     #
@@ -47,10 +33,15 @@ struct Vocabulary {
     #   Kubernetes
     #   TypeScript
     #
-    # For mishearings that don't sound close to the term, use an exact rule.
-    # These run first and always win:
+    # When the mishearing isn't close enough to the term, declare it yourself.
+    # Rules are matched by sound too, and always win over terms:
     #
     #   my sequel => MySQL
+    #
+    # Use ~> instead of => to allow one sound of slack. Stronger, and strong
+    # enough to rewrite ordinary words, so use it only where you mean it:
+    #
+    #   deal er ~> Deelr        # also catches "dealer"
     #
     # Saving this file reloads it — no restart needed.
     # Test without talking:  parrot vocab test "the post hawk dashboard"
@@ -72,10 +63,6 @@ struct Vocabulary {
     }
 
     /// Loads vocabulary from `path`.
-    ///
-    /// When `required` is false a missing file yields `nil` rather than an
-    /// error — an absent default config just means "no vocabulary". An explicit
-    /// `--vocab` that doesn't resolve is a real mistake and does throw.
     static func load(path: String, required: Bool) throws -> Vocabulary? {
         guard FileManager.default.fileExists(atPath: path) else {
             if required { throw VocabularyError.notFound(path) }
@@ -88,7 +75,7 @@ struct Vocabulary {
     static func parse(_ text: String) -> Vocabulary {
         var terms: [String] = []
         var seen = Set<String>()
-        var replacements: [(from: String, to: String)] = []
+        var replacements: [Replacement] = []
 
         func addTerm(_ t: String) {
             let key = t.lowercased()
@@ -101,13 +88,13 @@ struct Vocabulary {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
 
-            if let arrow = line.range(of: "=>") {
+            let arrow = line.range(of: "=>") ?? line.range(of: "~>")
+            if let arrow {
+                let fuzzy = line[arrow].hasPrefix("~")
                 let from = String(line[..<arrow.lowerBound]).trimmingCharacters(in: .whitespaces)
                 let to = String(line[arrow.upperBound...]).trimmingCharacters(in: .whitespaces)
                 guard !from.isEmpty else { continue }
-                replacements.append((from: from, to: to))
-                // The corrected spelling is worth biasing toward as well, so
-                // the model has a chance of getting it right unaided.
+                replacements.append(Replacement(from: from, to: to, fuzzy: fuzzy))
                 addTerm(to)
             } else {
                 addTerm(line)
@@ -116,27 +103,19 @@ struct Vocabulary {
         return Vocabulary(
             terms: terms,
             replacements: replacements,
-            matcher: PhoneticMatcher(terms: terms)
+            matcher: PhoneticMatcher(terms: terms, rules: replacements)
         )
     }
 
     /// Comma-joined enumeration. Whisper conditions on natural text, so a list
-    /// reads better to the model than one term per line.
     var promptText: String { terms.joined(separator: ", ") }
 
     /// Exact replacements first, then the phonetic pass over what's left.
-    ///
-    /// Order matters: an explicit `=>` rule is a decision the user made and
-    /// always wins. Phonetics only gets to see text no rule claimed, so this
-    /// can add corrections but never override one already trusted.
-    func apply(to text: String, phonetic: Bool = true) -> String {
-        var out = applyReplacements(to: text)
-        if phonetic { out = matcher.apply(to: out) }
-        return out
+    func apply(to text: String) -> String {
+        matcher.apply(to: applyReplacements(to: text))
     }
 
     /// Applies replacements case-insensitively on word boundaries. Longest
-    /// `from` first, so a specific phrase wins over a substring of itself.
     func applyReplacements(to text: String) -> String {
         var out = text
         for r in replacements.sorted(by: { $0.from.count > $1.from.count }) {

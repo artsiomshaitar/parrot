@@ -2,11 +2,12 @@ import AppKit
 import SwiftUI
 
 /// Borderless, click-through pill near the bottom of the active screen.
-/// Driven by the daemon's hotkey + transcription lifecycle.
 @MainActor
 final class RecordingOverlay {
     enum State: Equatable {
         case hidden
+        /// Key is down, but the microphone hasn't delivered audio yet. Shown
+        case warmingUp
         case recording
         case transcribing
     }
@@ -16,7 +17,7 @@ final class RecordingOverlay {
 
     func show(_ state: State) {
         ensureWindow()
-        if state == .recording {
+        if state == .warmingUp {
             model.resetLevels()
         }
         guard let window else { return }
@@ -24,8 +25,6 @@ final class RecordingOverlay {
         if needsAppear {
             positionAtBottomCenter(window)
             window.orderFrontRegardless()
-            // Defer the state change so SwiftUI lays out in the .hidden style
-            // first, then animates to the visible style on the next runloop tick.
             DispatchQueue.main.async { [model] in
                 model.state = state
             }
@@ -36,8 +35,6 @@ final class RecordingOverlay {
 
     func hide() {
         model.state = .hidden
-        // Let the SwiftUI scale+fade animation play out before yanking the
-        // window — otherwise it just pops away.
         let window = self.window
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
             window?.orderOut(nil)
@@ -101,7 +98,6 @@ final class OverlayModel: ObservableObject {
         var next = [Float]()
         next.reserveCapacity(Self.barCount)
         for i in 0..<Self.barCount {
-            // Small per-bar jitter so the bars don't all move in lockstep.
             let jitter = Float.random(in: 0.78...1.0)
             next.append(shaped * Self.envelope[i] * jitter)
         }
@@ -134,6 +130,9 @@ private struct OverlayPill: View {
     @ViewBuilder
     private var content: some View {
         switch model.state {
+        case .warmingUp:
+            WarmingBars()
+                .frame(width: 54, height: 22)
         case .hidden, .recording:
             Waveform(levels: model.levels)
                 .frame(width: 54, height: 22)
@@ -143,6 +142,27 @@ private struct OverlayPill: View {
                 .scaleEffect(0.8)
                 .frame(width: 54, height: 22)
         }
+    }
+}
+
+/// Resting bars, pulsing. Same shape as the live waveform so the pill doesn't
+private struct WarmingBars: View {
+    @State private var dim = false
+    private let color = Color(red: 181/255.0, green: 209/255.0, blue: 255/255.0)
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 4) {
+            ForEach(0..<OverlayModel.barCount, id: \.self) { _ in
+                Capsule()
+                    .fill(color)
+                    .frame(width: 2.5)
+                    .frame(maxHeight: .infinity)
+                    .scaleEffect(y: 0.10, anchor: .center)
+            }
+        }
+        .opacity(dim ? 0.25 : 0.55)
+        .animation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true), value: dim)
+        .onAppear { dim = true }
     }
 }
 

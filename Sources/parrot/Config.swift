@@ -1,31 +1,26 @@
 import Foundation
 
 /// Persisted preferences, written by the menu bar and read at startup.
-///
-/// Lives next to `vocab.txt` in `~/.config/parrot/`. Precedence is
-/// CLI flag → config file → built-in default, so an explicit flag always wins
-/// and the config is what you get when you launch with no arguments — which is
-/// how the LaunchAgent runs parrot.
 struct Config: Codable, Equatable {
     var model: String?
     var hotkey: String?
 
     static var path: String {
-        NSString(string: "~/.config/parrot/config.json").expandingTildeInPath
+        AppIdentity.configDirectory + "/config.json"
     }
 
-    /// A missing or malformed config is not fatal — preferences are a
-    /// convenience, and refusing to start over them would be hostile.
+    /// A missing or malformed config is not fatal.
     static func load() -> Config {
-        guard let data = FileManager.default.contents(atPath: path) else {
+        let source = FileManager.default.fileExists(atPath: path)
+            ? path
+            : AppIdentity.sharedConfigDirectory + "/config.json"
+        guard let data = FileManager.default.contents(atPath: source) else {
             return Config()
         }
         do {
             return try JSONDecoder().decode(Config.self, from: data)
         } catch {
-            FileHandle.standardError.write(Data(
-                "warning: ignoring malformed \(path): \(error.localizedDescription)\n".utf8
-            ))
+            logLine("warning: ignoring malformed \(source): \(error.localizedDescription)")
             return Config()
         }
     }

@@ -2,14 +2,6 @@ import ArgumentParser
 import CoreGraphics
 
 /// The push-to-talk key.
-///
-/// Two shapes, because macOS reports them differently:
-///
-///   * **Modifiers** (fn, option, …) arrive as `.flagsChanged` events. There is
-///     no left/right distinction in `CGEventFlags` — both option keys set
-///     `.maskAlternate` — so side-specific choices also match a keycode.
-///   * **Regular keys** (F5, F13, …) arrive as `.keyDown` / `.keyUp`, and
-///     repeat while held, so auto-repeat has to be filtered out.
 enum Hotkey: Equatable {
     case fn
     case rightOption
@@ -32,8 +24,7 @@ enum Hotkey: Equatable {
         }
     }
 
-    /// Physical keycode. nil means "any key carrying `mask`" — correct for Fn,
-    /// which has no left/right pair.
+    /// Physical keycode; nil means any key carrying `mask`.
     var keyCode: Int64? {
         switch self {
         case .fn: return nil
@@ -71,8 +62,7 @@ enum Hotkey: Equatable {
         "right-shift": .rightShift,
     ]
 
-    /// Standard Apple keycodes for the function row. F5 (96) is the key with
-    /// the microphone icon on recent keyboards.
+    /// Standard Apple keycodes for the function row.
     private static let functionKeys: [String: Int64] = [
         "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
         "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
@@ -87,8 +77,6 @@ enum Hotkey: Equatable {
         } else if let code = Self.functionKeys[key] {
             self = .key(code: code, label: key)
         } else if key.hasPrefix("keycode:"), let code = Int64(key.dropFirst("keycode:".count)) {
-            // Escape hatch for anything not named above — discover the number
-            // with `parrot --debug-hotkey`.
             self = .key(code: code, label: key)
         } else {
             return nil
@@ -99,8 +87,7 @@ enum Hotkey: Equatable {
 extension Hotkey: ExpressibleByArgument {
     init?(argument: String) { self.init(name: argument) }
 
-    /// Shown in `--help`. The function row is collapsed to a range rather than
-    /// listing twenty entries.
+    /// Shown in `--help`, with the function row collapsed to a range.
     static var allValueStrings: [String] {
         Array(modifiers.keys).sorted() + ["f1…f20", "keycode:N"]
     }
